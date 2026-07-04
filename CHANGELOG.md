@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/);
 versioning follows the convention described in
 [CONTRIBUTING.md](CONTRIBUTING.md#versioning) (semver-for-0.x pre-1.0).
 
+## [0.4.1] — 2026-07-04
+
+### Changed
+
+- Corrected the BLE bonding docs + broker hint to match reality. The Nimbus
+  firmware bonds via macOS **"Just Works"** (encrypted + bonded, no passkey to
+  type) — not a MITM passkey, because macOS won't surface a passkey dialog for a
+  custom peripheral paired by the broker. Two gotchas are now documented: Nimbus
+  never appears in the System Settings Bluetooth list (it's a custom peripheral),
+  and the **first** bond must be made with the broker in the **foreground** — a
+  fully detached (`nohup … &`) process can't complete it. Once bonded it's
+  transparent and can run backgrounded. (Verified end-to-end on hardware.)
+
 ## [0.4.0] — 2026-07-04
 
 ### Changed

@@ -303,11 +303,11 @@ class BleTransport:
                 if not self._pairing_warned:
                     self._pairing_warned = True
                     log.warning(
-                        "Nimbus rejected the frame — the link isn't paired yet. "
-                        "Pair it once: open System Settings > Bluetooth, click "
-                        "Nimbus, and type the 6-digit code shown on the device "
-                        "screen (also printed on its serial console). After that "
-                        "this works automatically.")
+                        "Nimbus isn't bonded yet — the OS bonds automatically "
+                        "(Just Works, no code to type), this should clear in a "
+                        "second. If it persists, you're likely running the broker "
+                        "detached (nohup/&): run it in the FOREGROUND once so macOS "
+                        "can complete the first bond, then it works anywhere.")
                 # macOS upgrades the SAME connection to encrypted in place (no
                 # reconnect), and frames are event-driven — so without this timer
                 # nothing would re-drive the pending frame once the user pairs, and
