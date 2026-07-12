@@ -106,20 +106,31 @@ class Broker:
         records  = self._allocator.active_segments()
         # nsn v2: carry the harness + a short title (cwd basename) per segment so the
         # device e-ink NAMES a session ("codex nimbus: running") instead of "job N".
-        # Byte-compatible: a v1 device ignores the trailing TLVs. (A protoVer gate to
-        # suppress v2 for old firmware is a future refinement; small v2 frames fit the
-        # v1 buffer anyway.)
+        # Byte-compatible on the DECODE side: a v1 firmware ignores the trailing TLVs.
+        # ⚠ KNOWN LIMITATION: harness is set for every real session, so every frame with
+        # >=1 active session is now v2 (LEN > 68). A device on PRE-v2 firmware whose
+        # Decoder used the old 71-byte packet buffer REJECTS such frames — a proper
+        # protoVer negotiation (device advertises, broker suppresses v2 for old firmware)
+        # is still a future item (docs/notifier-status-language.md). Not "small frames fit
+        # the v1 buffer" — they don't; the mitigation is to flash v2 firmware.
         segments = []
         for r in records:
             seg = FrameSegment.from_state(r.state)
             seg.harness = HARNESS_CODE.get(r.harness, 0)
             seg.title = os.path.basename(r.cwd.rstrip("/")) if r.cwd else ""
             segments.append(seg)
-        frame    = encode_frame(segments, BRIGHTNESS, self._seq)
-        self._seq = (self._seq + 1) & 0xFF
-        ok = self._transport.send(frame)
-        if not ok:
-            log.debug("frame not delivered (transport unavailable)")
+        # Never let a frame encode/send error escape into handle_event() or _ttl_loop()
+        # (which have no encode guard) — a single raised frame would drop the push AND
+        # freeze the seq / kill the eviction task. encode_frame() already caps the payload
+        # to <=255, so this is belt-and-braces.
+        try:
+            frame = encode_frame(segments, BRIGHTNESS, self._seq)
+            self._seq = (self._seq + 1) & 0xFF
+            ok = self._transport.send(frame)
+            if not ok:
+                log.debug("frame not delivered (transport unavailable)")
+        except Exception:
+            log.exception("frame encode/send failed — dropping this frame")
         self._write_status(records)
 
     def _write_status(self, records: list) -> None:

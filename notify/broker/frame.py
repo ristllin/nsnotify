@@ -60,6 +60,20 @@ def _crc8(data: bytes) -> int:
     return crc
 
 
+def _truncate_utf8(s: str, maxbytes: int) -> bytes:
+    """UTF-8-encode `s` and cap at `maxbytes`, backing off to a whole codepoint so the
+    wire never carries a half-encoded multibyte char (the device copies raw bytes into a
+    char[] with no validation, so a split codepoint renders as a garbage glyph)."""
+    b = s.encode("utf-8")[:maxbytes]
+    while b:
+        try:
+            b.decode("utf-8")
+            return b
+        except UnicodeDecodeError:
+            b = b[:-1]
+    return b
+
+
 def encode_frame(segments: list[FrameSegment], brightness: int, seq: int) -> bytes:
     """Return a complete framed packet ready to write to the transport."""
     n = min(len(segments), MAX_SEGS)
@@ -80,11 +94,23 @@ def encode_frame(segments: list[FrameSegment], brightness: int, seq: int) -> byt
     # v2 extension: per-segment [harness][titleLen][title], only when a segment carries
     # harness/title (so a plain v1 frame is byte-identical). Titles are UTF-8, capped.
     if any(seg.harness or seg.title for seg in segs):
+        # The whole payload must fit the 1-byte LEN field (<=255) — else bytes([...])
+        # raises ValueError and the push/TTL task dies (the device encoder guards this
+        # with `payloadLen > 255 return 0`; the broker must match). Budget title bytes
+        # greedily: fixed v2 overhead is the base block already in `payload` plus 2
+        # header bytes per segment; include a title only while it keeps the total <=255,
+        # otherwise emit harness with an empty title (the device degrades to harness-only,
+        # never crashes). With MAX_SEGS=16 the fixed overhead is 100 bytes, so titles
+        # always have >=155 bytes of headroom and this can never overflow.
+        budget = 255 - (len(payload) + n * 2)
         for seg in segs:
-            t = seg.title.encode("utf-8")[:MAX_TITLE]
+            t = _truncate_utf8(seg.title, MAX_TITLE)   # codepoint-safe cap
+            if len(t) > budget:
+                t = b""                                 # drop this title to stay <=255
+            budget -= len(t)
             payload += bytes([seg.harness & 0xFF, len(t)]) + t
     crc = _crc8(payload)
-    return bytes([FRAME_SOF, len(payload)]) + payload + bytes([crc])
+    return bytes([FRAME_SOF, len(payload) & 0xFF]) + payload + bytes([crc])
 
 
 @dataclass
