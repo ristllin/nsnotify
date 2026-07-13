@@ -121,7 +121,12 @@ class Broker:
         for r in records:
             seg = FrameSegment.from_state(r.state)
             seg.harness = HARNESS_CODE.get(r.harness, 0)
-            seg.title = os.path.basename(r.cwd.rstrip("/")) if r.cwd else ""
+            # basename + a short session suffix so two sessions in the SAME
+            # directory are distinguishable on the device ("nimbus#3f2a"). The
+            # 24-byte title cap is enforced codepoint-safe by FrameSegment.
+            base = os.path.basename(r.cwd.rstrip("/")) if r.cwd else ""
+            sid  = (r.session_id or "").replace("-", "")[:4]
+            seg.title = f"{base}#{sid}" if base and sid else (base or sid)
             segments.append(seg)
         # Never let a frame encode/send error escape into handle_event() or _ttl_loop()
         # (which have no encode guard) — a single raised frame would drop the push AND
