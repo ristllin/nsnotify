@@ -108,5 +108,13 @@ _VERB_TO_STATE: dict[str, State] = {
 
 
 def verb_to_state(verb: str) -> State:
-    """Map a canonical verb to a State.  Unknown verbs → Running (safe default)."""
+    """Map a canonical verb to a State.
+
+    Unknown verbs → Running (safe default) — EXCEPT unknown ``notify:*``
+    subtypes: a Notification by definition means the agent wants the human
+    (owner bug: Claude's plan-approval prompt arrived as an unmapped notify
+    subtype and rendered as plain Running — a needs-you state showed nothing).
+    """
+    if verb not in _VERB_TO_STATE and verb.startswith("notify:"):
+        return State.WaitingInput
     return _VERB_TO_STATE.get(verb, State.Running)
