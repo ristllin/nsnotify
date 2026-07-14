@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1 (2026-07-14)
+
+- Unknown `notify:*` subtypes now map to **WaitingInput** instead of Running —
+  Claude plan-approval prompts (an unmapped notify subtype) rendered as plain
+  Running and never lit the needs-you ring. A Notification means the agent
+  wants the human, by definition.
+
 All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/);
