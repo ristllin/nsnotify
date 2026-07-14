@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`nimbus-notify install-hooks --harness vibe`** now actually writes files instead
+  of only printing instructions. It appends the three `[[hooks]]` blocks to
+  `~/.vibe/hooks.toml` and inserts `enable_experimental_hooks = true` before the
+  first `[section]` header in `~/.vibe/config.toml`. Both operations are idempotent,
+  back up to `.bak`, and respect `--dry-run`. The embedded template is asserted to
+  match `hooks/vibe/hooks.toml` byte-for-byte so it can't drift.
+- **`nimbus-notify doctor`** now checks that `enable_experimental_hooks = true` is
+  present in `~/.vibe/config.toml` (hooks silently do nothing without this flag).
+
 ## 1.3.0 (2026-07-14)
 
 ### Added
