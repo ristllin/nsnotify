@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.3.0 (2026-07-14)
+
+### Added
+
+- **`nimbus-notify install-hooks`** — a real, harness-agnostic hooks installer.
+  Onboarding's #1 failure was that a `pip install` user got neither the plugin
+  slash command nor the `hooks/` files on disk, so nothing wired `led-report` into
+  their harness and the device stayed dark; they had to hand-write hooks. The new
+  command merges the correct wiring **idempotently** (appends to your config,
+  preserves hooks you already have, backs up to `.bak`, `--dry-run` to preview).
+  Fully automates the JSON configs (Claude `settings.json`, Codex `hooks.json`) and
+  prints the TOML toggles to paste. The canonical wiring is embedded in the
+  installer, so it works with no repo files present; a test asserts it reproduces
+  `hooks/claude/settings.json` + `hooks/codex/hooks.json` exactly (no drift).
+- **`nimbus-notify doctor`** — read-only check: broker running? hooks wired?
+  device/status reachable?
+- **[QUICKSTART.md](QUICKSTART.md)** — a siloed 5-minute quick start (install with
+  the `uv` / broken-pip caveats → `install-hooks` → connect → verify), so the main
+  README's reference material no longer buries the getting-started path.
+
+### Fixed
+
+- README told pip users to "merge `hooks/claude/settings.json`" — a file the wheel
+  does not ship. Now points at `install-hooks`, with the manual merge as a fallback,
+  and calls out that Claude's needs-you ring uses the **`Notification`** event (not
+  the Codex-only `PermissionRequest`).
+- Plugin manifest version synced to the package version (was pinned at 0.1.0).
+
 ## 1.2.1 (2026-07-14)
 
 - Unknown `notify:*` subtypes now map to **WaitingInput** instead of Running —

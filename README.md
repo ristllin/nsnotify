@@ -20,6 +20,10 @@ are still working and which ones are waiting on you.
 └────────────┘            └───────────────┘                       └──────────┘
 ```
 
+> **New here? → [QUICKSTART.md](QUICKSTART.md)** gets you from install to a reacting
+> device in ~5 minutes (install · `nimbus-notify install-hooks` · connect · verify).
+> The rest of this README is reference (services, bonding, transports, the protocol).
+
 ## Status
 
 Beta. The core broker, all three harness adapters, and both transports are
@@ -41,12 +45,19 @@ status display, point it at this broker.
 pip install nimbus-notify
 ```
 
-This installs two commands on your `PATH`:
+This installs three commands on your `PATH`:
 
 - `nimbus-notify-broker` — the daemon that maintains session state and talks to
   your device.
 - `led-report` — the small CLI that harness hooks call to report events
   into the broker (fire-and-forget; never blocks your agent).
+- `nimbus-notify` — setup helper: `install-hooks` wires `led-report` into your
+  harness config (idempotent, preserves existing hooks); `doctor` checks your setup.
+
+> **If `pip` itself errors** before it reaches this package (e.g. a Python 3.14
+> `pyexpat`/`libexpat` dylib mismatch on macOS), that's a broken host pip — use
+> [`uv`](https://docs.astral.sh/uv/): `uv tool install nimbus-notify`. See
+> [QUICKSTART.md](QUICKSTART.md#1-install) for the caveats.
 
 To hack on it, install from source instead:
 
@@ -131,13 +142,25 @@ nimbus-notify supports three AI coding harnesses today. Each harness reports
 events (session start, a tool running, waiting on your approval, done,
 errored, session end) by calling `led-report <harness> <verb>` from a hook.
 
+**The fastest way to wire any harness is the installer** (idempotent, keeps your
+existing hooks, safe to re-run):
+
+```bash
+nimbus-notify install-hooks                       # all harnesses
+nimbus-notify install-hooks --harness claude --dry-run   # preview
+```
+
+The manual per-harness steps below are the fallback (and what the installer does).
+
 ### Claude Code
 
-Merge [`hooks/claude/settings.json`](hooks/claude/settings.json)'s `hooks`
+`nimbus-notify install-hooks --harness claude` writes this for you. To do it by
+hand, merge [`hooks/claude/settings.json`](hooks/claude/settings.json)'s `hooks`
 block into your `~/.claude/settings.json`, preserving any hooks you already
 have (append to each event's array rather than replacing it). It wires up
 `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`,
-`StopFailure`, and `SessionEnd`.
+`StopFailure`, and `SessionEnd`. ⚠ The "needs you" ring uses the **`Notification`**
+event — not `PermissionRequest` (a Codex event name that Claude Code never emits).
 
 ### Codex
 
