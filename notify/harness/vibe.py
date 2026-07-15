@@ -36,7 +36,10 @@ from notify.harness.base import HarnessEvent
 
 log = logging.getLogger(__name__)
 
-HITL_TIMEOUT_S = 30.0  # seconds between before_tool and after_tool before inferring HITL
+HITL_TIMEOUT_S = 120.0  # before_tool with no after_tool within this -> infer "awaiting
+                        # approval". Was 30 s, which flipped every build/test/long-bash to
+                        # a false amber CTA (a coding tool routinely runs minutes; vibe's
+                        # own bash default_timeout is 300 s) — more false than true positives.
 VIBE_HOME      = Path.home() / ".vibe"
 VIBE_SESSIONS  = VIBE_HOME / "logs" / "session"
 
@@ -86,10 +89,17 @@ class VibeWatcher:
 
     def __init__(self, callback: EventCallback) -> None:
         self._cb      = callback
-        self._known:  set[str] = set()  # known session dir names
+        self._known:  set[str] = set()  # session dir names we've processed
+        self._ended:  set[str] = set()  # dirs we've already fired "end" for (never re-fire)
+        self._id_by_dir: dict[str, str] = {}  # dir name -> meta session_id (fixed at first sight)
+        self._primed  = False           # first scan seeds the baseline, doesn't light the ring
         self._thread: threading.Thread | None = None
         self._stop    = threading.Event()
-        # HITL tracker: session_id → monotonic time of the last before_tool
+        # HITL tracker: session_id → monotonic time of the last before_tool.
+        # Touched from BOTH the socket thread (record_*) and the watcher thread
+        # (_check_hitl_timeouts) — guard it, or an iteration race silently kills
+        # the watcher and vibe detection dies for the broker's lifetime.
+        self._lock = threading.Lock()
         self._pending_tool: dict[str, float] = {}
 
     def start(self) -> None:
@@ -109,44 +119,69 @@ class VibeWatcher:
 
     def record_before_tool(self, session_id: str) -> None:
         """Called by the broker when a before_tool event arrives."""
-        self._pending_tool[session_id] = time.monotonic()
+        with self._lock:
+            self._pending_tool[session_id] = time.monotonic()
 
     def record_after_tool(self, session_id: str) -> None:
-        """Called by the broker when an after_tool event arrives."""
-        self._pending_tool.pop(session_id, None)
+        """Called by the broker when an after_tool event arrives (or a session frees)."""
+        with self._lock:
+            self._pending_tool.pop(session_id, None)
 
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self._scan_sessions()
-            self._check_hitl_timeouts()
+            try:
+                self._scan_sessions()
+                self._check_hitl_timeouts()
+            except Exception:  # a transient FS/JSON race must never kill the watcher
+                log.exception("vibe watcher sweep failed (continuing)")
             time.sleep(2.0)
+
+    def _meta_ended(self, name: str) -> bool:
+        return bool(self._read_meta(name).get("end_time"))
+
+    def _fire_start(self, name: str, meta: dict) -> None:
+        self._cb({
+            "harness":    "vibe",
+            "session_id": self._id_by_dir.get(name, name),
+            "cwd":        meta.get("working_directory", ""),
+            "verb":       "start",
+        })
+
+    def _fire_end(self, name: str) -> None:
+        sid = self._id_by_dir.get(name, name)
+        self._cb({"harness": "vibe", "session_id": sid, "cwd": "", "verb": "end"})
+        self._ended.add(name)
+        self.record_after_tool(sid)
 
     def _scan_sessions(self) -> None:
         try:
-            current = {d.name for d in VIBE_SESSIONS.iterdir() if d.is_dir()}
+            current = {d.name for d in VIBE_SESSIONS.iterdir()
+                       if d.is_dir() and not d.is_symlink()}   # skip the .last_session symlink
         except OSError:
             return
 
-        new  = current - self._known
-        gone = self._known - current
-
-        for name in new:
-            meta = self._read_meta(name)
-            self._cb({
-                "harness":    "vibe",
-                "session_id": meta.get("session_id", name),
-                "cwd":        meta.get("working_directory", ""),
-                "verb":       "start",
-            })
+        # New dirs. On the FIRST scan we seed a baseline: every pre-existing dir is
+        # recorded as known WITHOUT lighting the ring UNLESS it's genuinely live
+        # (no end_time — a session that outlived a broker restart). This is the fix
+        # for the ring flooding with every historical session on each broker (re)start.
+        for name in current - self._known:
             self._known.add(name)
+            meta = self._read_meta(name)
+            self._id_by_dir[name] = meta.get("session_id", name)
+            if meta.get("end_time"):                # already finished (historical / backfilled)
+                self._ended.add(name)
+                continue
+            self._fire_start(name, meta)            # live: light it (first scan or later)
+        self._primed = True
 
-        for name in gone:
-            # We don't have the session_id from the dir name alone; best effort.
-            self._cb({"harness": "vibe", "session_id": name, "cwd": "", "verb": "end"})
-            self._known.discard(name)
-            self._pending_tool.pop(name, None)
+        # End detection: dirs never disappear in practice, so drive "end" off
+        # meta.json gaining a non-null end_time (keyed by the mapped session_id,
+        # not the dir name — the old code freed the wrong key, so nothing cleared).
+        for name in list(self._known - self._ended):
+            if name not in current or self._meta_ended(name):
+                self._fire_end(name)
 
     def _read_meta(self, dir_name: str) -> dict:
         try:
@@ -156,10 +191,12 @@ class VibeWatcher:
             return {}
 
     def _check_hitl_timeouts(self) -> None:
-        now     = time.monotonic()
-        expired = [sid for sid, t in self._pending_tool.items()
-                   if now - t > HITL_TIMEOUT_S]
+        now = time.monotonic()
+        with self._lock:
+            expired = [sid for sid, t in self._pending_tool.items()
+                       if now - t > HITL_TIMEOUT_S]
+            for sid in expired:
+                del self._pending_tool[sid]
         for sid in expired:
             log.debug("vibe HITL inferred for session %s", sid)
             self._cb({"harness": "vibe", "session_id": sid, "cwd": "", "verb": "hitl_inferred"})
-            del self._pending_tool[sid]

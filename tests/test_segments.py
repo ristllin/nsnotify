@@ -48,15 +48,17 @@ def test_full_allocator_returns_minus_one():
     assert idx == -1
 
 
-def test_active_segments_ordered_by_index():
+def test_active_segments_ordered_by_arrival_not_slot():
+    # Ring order is ARRIVAL order (2026-07 audit fix): a session that recycles a
+    # freed low capacity-slot must still render LAST, so existing arcs never
+    # reshuffle under the user when another session is born/dies.
     alloc = SegmentAllocator(max_segs=4)
     for i in range(3):
-        alloc.register(_rec(f"s{i}"))
-    alloc.free("s1")
-    alloc.register(_rec("s3"))
-    segments = alloc.active_segments()
-    indices = [r.segment for r in segments]
-    assert indices == sorted(indices)
+        alloc.register(_rec(f"s{i}"))   # s0, s1, s2
+    alloc.free("s1")                    # slot 1 freed
+    alloc.register(_rec("s3"))          # s3 recycles slot 1, but arrives last
+    order = [r.session_id for r in alloc.active_segments()]
+    assert order == ["s0", "s2", "s3"], f"arrival order not preserved: {order}"
 
 
 def test_highest_priority_state():

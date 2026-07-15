@@ -72,6 +72,13 @@ class Broker:
         cwd        = msg.get("cwd", "")
         verb       = msg.get("verb", "running")
 
+        # An empty session_id (codex with no turn-id, malformed stdin) would collapse
+        # every such event from every harness into ONE phantom "" segment whose
+        # identity flip-flops. Drop it — a real session always has an id.
+        if not session_id:
+            log.debug("dropping event with empty session_id (harness=%s verb=%s)", harness, verb)
+            return
+
         # Fold notification_type into the verb for Claude Notification events.
         if verb == "notify" and "notification_type" in msg:
             verb = f"notify:{msg['notification_type']}"
@@ -101,12 +108,20 @@ class Broker:
                         rec.pid_alive_seen = True     # alive, not ours
                     except (ProcessLookupError, OSError):
                         pass                          # container/foreign pid: never evict by pid
-                if session_id not in self._allocator._index:
-                    self._allocator.register(rec)
-                else:
+                if session_id in self._allocator._index:
                     self._allocator.update(rec)
                     if rec.pid:   # refresh liveness identity on every event
                         self._allocator._sessions[session_id].pid = rec.pid
+                elif verb == "hitl_inferred":
+                    # An INFERENCE must never CREATE a session. A vibe session
+                    # killed mid-tool leaves a pending timer that would otherwise
+                    # resurrect the dead session as a phantom amber CTA (no pid to
+                    # evict, holds the full CTA TTL). Only real starts register.
+                    pass
+                elif self._allocator.register(rec) < 0:
+                    log.warning("segment table full (%d) — new %s session %s not "
+                                "shown until a slot frees", self._allocator._max,
+                                harness, session_id)
 
             self._push_frame()
 
@@ -169,10 +184,16 @@ class Broker:
         # Ensure the state dir exists even if _run() never created it — a frame
         # can be pushed straight from handle_event (tests, or an embedder that
         # skips _run), and the dir could be removed at runtime. Cheap + idempotent.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp  = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(status, indent=2))
-        tmp.replace(path)
+        # A write failure must NEVER escape: _push_frame -> _sweep_once -> _ttl_loop
+        # has no guard above this, so one transient OSError (disk full, ~/.local
+        # unmounted) used to kill the eviction+heartbeat loop for the broker's life.
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp  = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(status, indent=2))
+            tmp.replace(path)
+        except OSError:
+            log.warning("could not write %s — continuing", path, exc_info=True)
 
     # ------------------------------------------------------------------
     # TTL housekeeping
@@ -181,7 +202,10 @@ class Broker:
     async def _ttl_loop(self) -> None:
         while True:
             await asyncio.sleep(self._ttl_check)
-            self._sweep_once()
+            try:
+                self._sweep_once()   # belt-and-braces: nothing in a sweep may kill the loop
+            except Exception:
+                log.exception("ttl sweep failed (continuing)")
 
     def _sweep_once(self) -> None:
         """One eviction+heartbeat sweep (sync; extracted so tests can drive it)."""
@@ -333,6 +357,12 @@ async def _run(port: str | None = None,
     os.chmod(str(SOCKET_PATH), 0o600)
 
     log.info("broker listening on %s", SOCKET_PATH)
+
+    # Startup resync: push one frame of the (empty) table now, so a device still
+    # showing the PREVIOUS broker's last ring — possibly a stale red CTA held for
+    # the 5-min device hold after a crash+KeepAlive restart — is cleared promptly
+    # instead of lingering, and status.json is truthfully emptied at startup.
+    broker._push_frame()
 
     loop = asyncio.get_running_loop()
     stop = loop.create_future()

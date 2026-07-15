@@ -23,8 +23,15 @@ class SegmentAllocator:
     def __init__(self, max_segs: int = MAX_SEGS) -> None:
         self._max = max_segs
         self._sessions: dict[str, SessionRecord] = {}  # session_id → record
-        self._index: dict[str, int] = {}               # session_id → segment index
+        self._index: dict[str, int] = {}               # session_id → capacity slot (0..max-1)
         self._used: set[int] = set()
+        # Ring ORDER is arrival order, NOT the capacity slot: a freed low slot gets
+        # recycled, so ordering by slot made a NEW session insert BEFORE existing
+        # arcs (and survivors shift when a low-slot session ends) — "my codex arc
+        # jumps around" every birth/death. A monotonic birth stamp keeps arrival
+        # order stable; the slot stays pure capacity bookkeeping.
+        self._order: dict[str, int] = {}               # session_id → birth sequence
+        self._seq = 0
 
     # ------------------------------------------------------------------
     # Mutation
@@ -42,6 +49,8 @@ class SegmentAllocator:
         self._sessions[record.session_id] = record
         self._index[record.session_id]    = idx
         self._used.add(idx)
+        self._seq += 1
+        self._order[record.session_id]    = self._seq
         record.segment = idx
         return idx
 
@@ -60,6 +69,7 @@ class SegmentAllocator:
         if idx is not None:
             self._used.discard(idx)
         self._sessions.pop(session_id, None)
+        self._order.pop(session_id, None)
 
     def evict_stale(self, ttl: float = SESSION_TTL_S,
                     cta_ttl: float = CTA_TTL_S) -> list[str]:
@@ -86,8 +96,10 @@ class SegmentAllocator:
     # ------------------------------------------------------------------
 
     def active_segments(self) -> list[SessionRecord]:
-        """Sessions ordered by segment index (ring position)."""
-        return sorted(self._sessions.values(), key=lambda r: self._index[r.session_id])
+        """Sessions in ARRIVAL order (stable ring position — new sessions append,
+        existing arcs never reshuffle when another is born)."""
+        return sorted(self._sessions.values(),
+                      key=lambda r: self._order.get(r.session_id, 0))
 
     def highest_priority_state(self) -> State:
         """State with the highest priority among all active sessions."""
