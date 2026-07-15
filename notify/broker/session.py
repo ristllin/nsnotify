@@ -31,9 +31,10 @@ from notify.state import State
 #     after the TTL, but it reappears the instant it does anything. `--ttl` tunes
 #     this window (see server.py).
 #
-#   CTA_TTL_S (900 s) — call-to-action states (WaitingInput / AwaitingApproval /
-#     Error): a job blocked ON the human. Kept at the original 15 min so the
-#     ring's highest-value signal can't vanish while it's still pending. A
+#   CTA_TTL_S (300 s / 5 min) — call-to-action states (WaitingInput /
+#     AwaitingApproval / Error): a job blocked ON the human. Matches the device's
+#     5-min attention hold so the ring's highest-value signal can't vanish while
+#     it's still pending (was 900 s; lowered in the 2026-07-13 red-ring round). A
 #     killed CTA session therefore lingers longer — the safe direction (better
 #     to over-show a pending job than to hide a live one). Never shorter than
 #     the benign window (the broker clamps: max(benign_ttl, CTA_TTL_S)).
@@ -102,6 +103,11 @@ _VERB_TO_STATE: dict[str, State] = {
     "notify:permission_prompt": State.AwaitingApproval,   # Claude Notification
     "notify:elicitation_dialog":State.WaitingInput,
     "notify:idle_prompt":       State.WaitingInput,       # Claude idle 60 s
+    # BENIGN notifications — explicitly NOT a needs-you. Without these the unknown-
+    # notify:* fallback below flips them to WaitingInput and holds a false 300 s CTA
+    # (e.g. right after an OAuth login, or the instant an elicitation dialog COMPLETES).
+    "notify:auth_success":        State.Running,
+    "notify:elicitation_complete":State.Running,
     "hitl_inferred":            State.AwaitingApproval,   # Vibe heuristic
     "plan_pending":             State.WaitingInput,       # Codex plan-mode Stop = waiting on you
 }

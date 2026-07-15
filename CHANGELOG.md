@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.3.1 (2026-07-15)
+
+Reliability round from a scoped UX audit of the session→ring pipeline.
+
+### Fixed
+
+- **VibeWatcher flooded the ring with every historical session dir on each broker
+  (re)start.** With launchd KeepAlive that meant a phantom multi-session ring twice a
+  day. First scan now baselines silently and only lights a dir with no `end_time` (a
+  session genuinely live across a restart); skips the `.last_session` symlink.
+- **Vibe "end" never fired** (dirs persist; the disappearance branch freed the wrong
+  key). Now driven by `meta.json` gaining `end_time`, keyed by the real session id — so
+  vibe sessions clear instead of lingering the full TTL.
+- **Ring position was unstable**: a new session recycled a freed low slot and inserted
+  *before* existing arcs. Order is now arrival order (new sessions append; existing arcs
+  never reshuffle when another is born/dies).
+- **Vibe HITL false "awaiting approval"**: the 30 s inference tripped on any build/test/
+  long bash. Raised to 120 s; the broker also refuses to *resurrect* an unknown session
+  from an inference, and the pending-tool map is lock-guarded (a cross-thread race used
+  to silently kill the watcher).
+- **Empty `session_id`** (codex with no turn-id / malformed stdin) is dropped instead of
+  merging every such event into one phantom `""` segment.
+- **Codex duplicate sessions**: the installer no longer advises the legacy `notify`
+  program alongside `hooks.json` (it keys by the per-turn turn-id → a new segment every
+  turn); the notify path also prefers a stable id if present.
+- **Benign Claude notifications** (`auth_success`, `elicitation_complete`) no longer flip
+  to a false "needs you" CTA held 5 minutes.
+- Crash-safety: a `status.json` write error (or anything in a sweep) no longer kills the
+  eviction+heartbeat loop; allocator-full is logged, not silently dropped; startup pushes
+  a resync frame so a stale (possibly red) ring from a crashed prior broker clears.
+- Doc: the `CTA_TTL_S` header comment said 900 s while the constant is 300 s.
+
 ## 1.3.0 (2026-07-14)
 
 ### Added

@@ -175,10 +175,12 @@ def install_codex(dry_run: bool) -> None:
     print("Codex (~/.codex/hooks.json):")
     _write_json_config(Path.home() / ".codex" / "hooks.json",
                        build_codex_hooks()["hooks"], "codex", dry_run)
-    print("Codex — add these to ~/.codex/config.toml (paste; stdlib can't safely edit TOML):\n")
+    print("Codex — add this to ~/.codex/config.toml (paste; stdlib can't safely edit TOML):\n")
     print("    [features]")
     print("    hooks = true\n")
-    print('    notify = ["led-report", "codex-notify"]\n')
+    print("  (Do NOT also set `notify = [\"led-report\", \"codex-notify\"]` — the legacy notify")
+    print("   program keys sessions by the per-turn turn-id, so with hooks on it spawns a")
+    print("   SECOND, duplicate ring segment every turn. hooks.json already covers Codex.)\n")
 
 
 def install_vibe(dry_run: bool) -> None:

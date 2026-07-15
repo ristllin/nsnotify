@@ -68,9 +68,15 @@ def main() -> None:
             body = json.loads(args[1])
         except (json.JSONDecodeError, IndexError):
             sys.exit(0)
+        # Prefer a STABLE session id over turn-id: turn-id changes every turn, so
+        # keying on it spawns a NEW ring segment per turn (the duplicate-session bug).
+        # (The installer tells users not to enable this legacy notify program alongside
+        # hooks.json at all — this is just defense-in-depth for those who do.)
+        sid = (body.get("session_id") or body.get("conversation-id")
+               or body.get("turn-id") or "")
         _send({
             "harness":    "codex",
-            "session_id": body.get("turn-id", ""),
+            "session_id": sid,
             "cwd":        body.get("cwd", ""),
             "verb":       "done",  # notify fires only on agent-turn-complete
         })
